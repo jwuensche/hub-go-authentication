@@ -55,23 +55,24 @@ func authUser(w http.ResponseWriter, r *http.Request) {
 	res := Credentials{}
 	json.Unmarshal([]byte(body), &res)
 
-	name_crypt := sha512.Sum512([]byte(res.Name))
-	pass_crypt := []byte(res.Password)
-	salt := pass_crypt[8:]
-	pass_crypt = pass_crypt[:31]
-	pass_crypt, err := scrypt.Key([]byte(res.Password), salt, 32768, 8, 1, 32)
-
-	f, err := ioutil.ReadFile(fmt.Sprintf("%X", name_crypt))
-	if err != nil {
-		fmt.Println("wrong username")
-	}
+	nameCrypt := sha512.Sum512([]byte(res.Name))
 	store := Store{}
+	f, err := ioutil.ReadFile(fmt.Sprintf("%X", nameCrypt))
+	if err != nil {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte("403 - Forbidden"))
+		return
+	}
 	json.Unmarshal(f, &store)
-	if bytes.Equal(pass_crypt, store.Pass) {
+
+	passCrypt, _ := scrypt.Key([]byte(res.Password), store.Pass[len(store.Pass)-8:], 32768, 8, 1, 32)
+
+	if bytes.Equal(append(passCrypt, store.Pass[len(store.Pass)-8:]...), store.Pass) {
 		exemptToken(w, r)
 	} else {
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte("403 - Forbidden"))
+		return
 	}
 }
 
@@ -82,13 +83,14 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 
 	salt := make([]byte, 8)
 	rand.Read(salt)
-	name_crypt := sha512.Sum512([]byte(res.Name))
-	pass_crypt, _ := scrypt.Key([]byte(res.Password), salt, 32768, 8, 1, 32)
-	f, _ := os.Create(fmt.Sprintf("%X", name_crypt))
-	store_element := Store{
-		Pass: append(pass_crypt, salt...),
+
+	nameCrypt := sha512.Sum512([]byte(res.Name))
+	passCrypt, _ := scrypt.Key([]byte(res.Password), salt, 32768, 8, 1, 32)
+	f, _ := os.Create(fmt.Sprintf("%X", nameCrypt))
+	storeElement := Store{
+		Pass: append(passCrypt, salt...),
 	}
-	js, _ := json.Marshal(store_element)
+	js, _ := json.Marshal(storeElement)
 	f.Write(js)
 }
 
@@ -116,7 +118,7 @@ func checkToken(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-
+	w.Header().Set("Content-Type", "application/json")
 	js, _ := json.Marshal(res)
 	if !occured {
 		js, _ = json.Marshal(Token{Token: "false"})
