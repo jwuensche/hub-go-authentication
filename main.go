@@ -17,19 +17,24 @@ import (
 	"github.com/gorilla/mux"
 )
 
+/* Credentials allows to unwrap Credentials send in http requests*/
 type Credentials struct {
 	Name     string
 	Password string
 }
 
+/* Token allows to unwrap Token send in http requests */
 type Token struct {
 	Token string
 }
 
+/* Store allows to retrieve previous stored Credentials that were once encrypted*/
 type Store struct {
 	Pass []byte
 }
 
+/* Session allows for storage of currently used tokens and faster authentication of in use user
+ */
 type Session struct {
 	Token    string
 	TimeLeft int
@@ -45,6 +50,7 @@ func main() {
 	r.HandleFunc("/auth", authUser)
 	r.HandleFunc("/register", registerUser)
 	r.HandleFunc("/checkToken", checkToken)
+	r.HandleFunc("/logout", logoutUser)
 	http.Handle("/", r)
 	fmt.Println("Listening on port 9000")
 	log.Fatal(http.ListenAndServe(":9000", handlers.CORS(corsObj)(r)))
@@ -86,6 +92,12 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 
 	nameCrypt := sha512.Sum512([]byte(res.Name))
 	passCrypt, _ := scrypt.Key([]byte(res.Password), salt, 32768, 8, 1, 32)
+
+	if _, err := os.Stat(fmt.Sprintf("%X", nameCrypt)); err == nil {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte("403 - Forbidden"))
+		return
+	}
 	f, _ := os.Create(fmt.Sprintf("%X", nameCrypt))
 	storeElement := Store{
 		Pass: append(passCrypt, salt...),
@@ -114,24 +126,50 @@ func checkToken(w http.ResponseWriter, r *http.Request) {
 	var occured bool
 	for _, element := range currentSessions {
 		if element.Token == res.Token {
+			element.TimeLeft = 6
 			occured = true
 			break
 		}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	js, _ := json.Marshal(res)
+
 	if !occured {
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte("403 - Forbidden"))
+	} else {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("200 - OK"))
 	}
-	w.Write(js)
+	return
 }
 
 func checkSessions() {
-	for _, element := range currentSessions {
-		element.TimeLeft -= 1
+	for index, element := range currentSessions {
+		element.TimeLeft--
 		if element.TimeLeft == 0 {
-			element.Token = ""
+			currentSessions = append(currentSessions[:index], currentSessions[index+1:]...)
 		}
 	}
+}
+
+func logoutUser(w http.ResponseWriter, r *http.Request) {
+	body, _ := ioutil.ReadAll(r.Body)
+	res := Token{}
+	json.Unmarshal([]byte(body), &res)
+
+	var occured bool
+	for index, element := range currentSessions {
+		if element.Token == res.Token {
+			currentSessions = append(currentSessions[:index], currentSessions[index+1:]...)
+			occured = true
+			break
+		}
+	}
+	if !occured {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("500 - An error occured while trying to log off the user"))
+	} else {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("200 - Successfully logged out"))
+	}
+	return
 }

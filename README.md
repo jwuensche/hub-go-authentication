@@ -24,6 +24,3 @@ make run
 The Dockerfile will use the golang container to compile and run the container.
 Default wise the container will use port 9000 this can be changed in the
 Makefile.
-
-Known issues:
-+ User can be overwritten when a user with the same name is created
