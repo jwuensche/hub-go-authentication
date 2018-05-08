@@ -17,7 +17,7 @@ or if you want to build and run the docker image
 make docker
 docker create volume hub_go_auth
 
-#and then to the created container run
+#and then to run the created container
 make run
 ```
 
