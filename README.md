@@ -11,3 +11,19 @@ git clone git@bitbucket.org:jwuensche/hub-auth-service.git
 go build -o hub-go-auth
 ./hub-go-auth
 ```
+
+or if you want to build and run the docker image
+```bash
+make docker
+docker create volume hub_go_auth
+
+#and then to the created container run
+make run
+```
+
+The Dockerfile will use the golang container to compile and run the container.
+Default wise the container will use port 9000 this can be changed in the
+Makefile.
+
+Known issues:
++ User can be overwritten when a user with the same name is created

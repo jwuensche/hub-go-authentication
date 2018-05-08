@@ -121,7 +121,8 @@ func checkToken(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	js, _ := json.Marshal(res)
 	if !occured {
-		js, _ = json.Marshal(Token{Token: "false"})
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte("403 - Forbidden"))
 	}
 	w.Write(js)
 }
