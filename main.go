@@ -11,10 +11,9 @@ import (
 	"net/http"
 	"os"
 
-	"golang.org/x/crypto/scrypt"
-
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
+	"golang.org/x/crypto/scrypt"
 )
 
 /* Credentials allows to unwrap Credentials send in http requests*/
@@ -51,12 +50,26 @@ func main() {
 	r.HandleFunc("/register", registerUser)
 	r.HandleFunc("/checkToken", checkToken)
 	r.HandleFunc("/logout", logoutUser)
+	r.HandleFunc("/changePassword", changePassword)
 	http.Handle("/", r)
 	fmt.Println("Listening on port 9000")
 	log.Fatal(http.ListenAndServe(":9000", handlers.CORS(corsObj)(r)))
 }
 
+func setupResponse(w *http.ResponseWriter, req *http.Request) {
+	(*w).Header().Set("Access-Control-Allow-Origin", "*")
+	(*w).Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
+	(*w).Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
+}
+
 func authUser(w http.ResponseWriter, r *http.Request) {
+	setupResponse(&w, r)
+	if (*r).Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("200 - OK"))
+		return
+	}
+
 	body, _ := ioutil.ReadAll(r.Body)
 	res := Credentials{}
 	json.Unmarshal([]byte(body), &res)
@@ -74,7 +87,7 @@ func authUser(w http.ResponseWriter, r *http.Request) {
 	passCrypt, _ := scrypt.Key([]byte(res.Password), store.Pass[len(store.Pass)-8:], 32768, 8, 1, 32)
 
 	if bytes.Equal(append(passCrypt, store.Pass[len(store.Pass)-8:]...), store.Pass) {
-		exemptToken(w, r)
+		issueToken(w, r)
 	} else {
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte("403 - Forbidden"))
@@ -83,6 +96,10 @@ func authUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func registerUser(w http.ResponseWriter, r *http.Request) {
+	setupResponse(&w, r)
+	if (*r).Method == "OPTIONS" {
+		return
+	}
 	body, _ := ioutil.ReadAll(r.Body)
 	res := Credentials{}
 	json.Unmarshal([]byte(body), &res)
@@ -106,7 +123,7 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 	f.Write(js)
 }
 
-func exemptToken(w http.ResponseWriter, r *http.Request) {
+func issueToken(w http.ResponseWriter, r *http.Request) {
 	rnd := make([]byte, 8)
 	rand.Read(rnd)
 	ret := Token{
@@ -119,6 +136,10 @@ func exemptToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func checkToken(w http.ResponseWriter, r *http.Request) {
+	setupResponse(&w, r)
+	if (*r).Method == "OPTIONS" {
+		return
+	}
 	body, _ := ioutil.ReadAll(r.Body)
 	res := Token{}
 	json.Unmarshal([]byte(body), &res)
@@ -152,6 +173,10 @@ func checkSessions() {
 }
 
 func logoutUser(w http.ResponseWriter, r *http.Request) {
+	setupResponse(&w, r)
+	if (*r).Method == "OPTIONS" {
+		return
+	}
 	body, _ := ioutil.ReadAll(r.Body)
 	res := Token{}
 	json.Unmarshal([]byte(body), &res)
@@ -160,6 +185,8 @@ func logoutUser(w http.ResponseWriter, r *http.Request) {
 	for index, element := range currentSessions {
 		if element.Token == res.Token {
 			currentSessions = append(currentSessions[:index], currentSessions[index+1:]...)
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("200 - Successfully logged out"))
 			occured = true
 			break
 		}
@@ -167,9 +194,11 @@ func logoutUser(w http.ResponseWriter, r *http.Request) {
 	if !occured {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("500 - An error occured while trying to log off the user"))
-	} else {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("200 - Successfully logged out"))
 	}
 	return
+}
+
+func changePassword(w http.ResponseWriter, r *http.Request) {
+	//User is required to give the current valid password as well as the username and the new password
+	// TODO
 }
