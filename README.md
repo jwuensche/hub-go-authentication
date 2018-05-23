@@ -1,7 +1,7 @@
-# Hub-Auth-Service
+# HubGoAuthentication
 This repository contains an Authentication service build with go. It uses scrypt
 as encryption algorithm for passwords and additionally encrypts set usernames
-because this service does not require any information about the user.
+since no additional informations about the users are required.
 
 ## How to use
 ```bash
@@ -24,3 +24,6 @@ make run
 The Dockerfile will use the golang container to compile and run the container.
 Default wise the container will use port 9000 this can be changed in the
 Makefile.
+
+## Current Issues
+- Firefox and Chrome CORS preflight are getting 403
