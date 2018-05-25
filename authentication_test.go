@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 )
 
 func TestSetPassword(t *testing.T) {
@@ -39,7 +40,7 @@ func TestCheckCredentials(t *testing.T) {
 
 func TestTokenIssue(t *testing.T) {
 	//Positive
-	if issuetoken() == "" {
+	if issueToken() == "" {
 		t.FailNow()
 	}
 }
@@ -58,11 +59,16 @@ func TestMain(t *testing.T) {
 }
 
 func TestVerifyToken(t *testing.T) {
-	token := issuetoken()
+	token := issueToken()
 	if verifyToken(token) != true {
 		t.FailNow()
 	}
 	if verifyToken("foobar") == true {
 		t.FailNow()
 	}
+}
+
+func TestBackgroundDuties(t *testing.T) {
+	timeInterval = 100 * time.Millisecond
+	backgroundDuties()
 }

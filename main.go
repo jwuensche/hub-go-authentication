@@ -17,6 +17,8 @@ import (
 	"golang.org/x/crypto/scrypt"
 )
 
+/******************* structures and enums */
+
 const (
 	loginSuccessful    = 0
 	loginInvalid       = 1
@@ -35,7 +37,7 @@ type credentials struct {
 
 /* token allows to unwrap token send in http requests */
 type token struct {
-	token string
+	Token string
 }
 
 /* store allows to retrieve previous stored credentials that were once encrypted*/
@@ -56,11 +58,13 @@ type changePass struct {
 	NewPassword string
 }
 
+/******************* global variables */
 var currentSessions []session
 var testingMode bool
+var timeInterval time.Duration
 
+/******************* HTTP handling */
 func main() {
-	go backgroundDuties()
 	r := mux.NewRouter()
 	//This will allow access to the server even if Request originated somewhere else
 	allowOrigins := handlers.AllowedOrigins([]string{"*"})
@@ -68,7 +72,7 @@ func main() {
 	allowHeaders := handlers.AllowedHeaders([]string{"X-Requested-With"})
 	r.HandleFunc("/auth", authUser)
 	r.HandleFunc("/register", registerUser)
-	r.HandleFunc("/checktoken", checkToken)
+	r.HandleFunc("/checkToken", checkToken)
 	r.HandleFunc("/logout", logoutUser)
 	r.HandleFunc("/changePassword", changePassword)
 	http.Handle("/", r)
@@ -76,6 +80,9 @@ func main() {
 	if testingMode {
 		return
 	}
+	//So this is a quite ugly way to exlude them from testing
+	timeInterval = 5 * time.Minute
+	go backgroundDuties()
 	log.Fatal(http.ListenAndServe(":9000", handlers.CORS(allowOrigins, allowMethods, allowHeaders)(r)))
 }
 
@@ -88,8 +95,12 @@ func authUser(w http.ResponseWriter, r *http.Request) {
 
 	credCredibility := checkCredentials(res)
 	if credCredibility == loginSuccessful {
-		ret := token{token: issuetoken()}
-		js, _ := json.Marshal(ret)
+		test := issueToken()
+		ret := token{Token: test}
+		js, err := json.Marshal(ret)
+		if err != nil {
+			fmt.Println("error: format error")
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(js)
 	} else {
@@ -115,17 +126,7 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func issuetoken() (token string) {
-	rnd := make([]byte, 8)
-	rand.Read(rnd)
-
-	currentSessions = append(currentSessions, session{token: fmt.Sprintf("%X", rnd), TimeLeft: 6})
-	token = fmt.Sprintf("%X", rnd)
-	return
-}
-
 func checkToken(w http.ResponseWriter, r *http.Request) {
-	//setupResponse(&w, r)
 	if (*r).Method == "OPTIONS" {
 		return
 	}
@@ -133,7 +134,7 @@ func checkToken(w http.ResponseWriter, r *http.Request) {
 	res := token{}
 	json.Unmarshal([]byte(body), &res)
 
-	occured := verifyToken(res.token)
+	occured := verifyToken(res.Token)
 
 	if !occured {
 		w.WriteHeader(http.StatusForbidden)
@@ -141,56 +142,6 @@ func checkToken(w http.ResponseWriter, r *http.Request) {
 	} else {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("200 - OK"))
-	}
-	return
-}
-
-func backgroundDuties() {
-	ticker := time.NewTicker(5 * time.Minute)
-	for t := range ticker.C {
-		checkSessions()
-		fmt.Println("Background Tasks", t)
-	}
-}
-
-func checkSessions() {
-	for index, element := range currentSessions {
-		element.TimeLeft--
-		if element.TimeLeft == 0 {
-			currentSessions = append(currentSessions[:index], currentSessions[index+1:]...)
-		}
-	}
-}
-
-func verifyToken(token string) (occured bool) {
-	for _, element := range currentSessions {
-		if element.token == token {
-			element.TimeLeft = 6
-			occured = true
-			break
-		}
-	}
-	return
-}
-
-func logoutUser(w http.ResponseWriter, r *http.Request) {
-	body, _ := ioutil.ReadAll(r.Body)
-	res := token{}
-	json.Unmarshal([]byte(body), &res)
-
-	var occured bool
-	for index, element := range currentSessions {
-		if element.token == res.token {
-			currentSessions = append(currentSessions[:index], currentSessions[index+1:]...)
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("200 - Successfully logged out"))
-			occured = true
-			break
-		}
-	}
-	if !occured {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("500 - An error occured while trying to log off the user"))
 	}
 	return
 }
@@ -216,6 +167,61 @@ func changePassword(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte("403 - Forbidden"))
 	}
+}
+
+func logoutUser(w http.ResponseWriter, r *http.Request) {
+	body, _ := ioutil.ReadAll(r.Body)
+	res := token{}
+	json.Unmarshal([]byte(body), &res)
+
+	var occured bool
+	for index, element := range currentSessions {
+		if element.token == res.Token {
+			currentSessions = append(currentSessions[:index], currentSessions[index+1:]...)
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("200 - Successfully logged out"))
+			occured = true
+			break
+		}
+	}
+	if !occured {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("500 - An error occured while trying to log off the user"))
+	}
+	return
+}
+
+/****************************** utility functions */
+func backgroundDuties() {
+	ticker := time.NewTicker(timeInterval)
+	for t := range ticker.C {
+		checkSessions()
+		fmt.Println("Background Tasks", t)
+		if testingMode {
+			ticker.Stop()
+			return
+		}
+	}
+}
+
+func checkSessions() {
+	for index, element := range currentSessions {
+		element.TimeLeft--
+		if element.TimeLeft == 0 {
+			currentSessions = append(currentSessions[:index], currentSessions[index+1:]...)
+		}
+	}
+}
+
+func verifyToken(token string) (occured bool) {
+	for _, element := range currentSessions {
+		if element.token == token {
+			element.TimeLeft = 6
+			occured = true
+			break
+		}
+	}
+	return
 }
 
 func checkCredentials(credentials credentials) (state int) {
@@ -266,5 +272,14 @@ func setPassword(credentials credentials) (state int) {
 	}
 	f.Write(js)
 	state = registerSuccessful
+	return
+}
+
+func issueToken() (token string) {
+	rnd := make([]byte, 8)
+	rand.Read(rnd)
+
+	currentSessions = append(currentSessions, session{token: fmt.Sprintf("%X", rnd), TimeLeft: 6})
+	token = fmt.Sprintf("%X", rnd)
 	return
 }
