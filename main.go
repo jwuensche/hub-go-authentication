@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
@@ -17,10 +18,13 @@ import (
 )
 
 const (
-	loginSuccessful = 0
-	loginInvalid    = 1
-	loginFailed     = 2
-	fileError       = 3
+	loginSuccessful    = 0
+	loginInvalid       = 1
+	loginFailed        = 2
+	fileError          = 3
+	registerSuccessful = 4
+	formatError        = 5
+	encryptionError    = 6
 )
 
 /* credentials allows to unwrap credentials send in http requests*/
@@ -53,9 +57,10 @@ type changePass struct {
 }
 
 var currentSessions []session
+var testingMode bool
 
 func main() {
-	go checkSessions()
+	go backgroundDuties()
 	r := mux.NewRouter()
 	//This will allow access to the server even if Request originated somewhere else
 	allowOrigins := handlers.AllowedOrigins([]string{"*"})
@@ -68,23 +73,13 @@ func main() {
 	r.HandleFunc("/changePassword", changePassword)
 	http.Handle("/", r)
 	fmt.Println("Listening on port 9000")
+	if testingMode {
+		return
+	}
 	log.Fatal(http.ListenAndServe(":9000", handlers.CORS(allowOrigins, allowMethods, allowHeaders)(r)))
 }
 
-func setupResponse(w *http.ResponseWriter, req *http.Request) {
-	(*w).Header().Set("Access-Control-Allow-Origin", "*")
-	(*w).Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
-	(*w).Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-token, Authorization")
-}
-
 func authUser(w http.ResponseWriter, r *http.Request) {
-	// setupResponse(&w, r)
-	// if (*r).Method == "OPTIONS" {
-	// 	w.WriteHeader(http.StatusOK)
-	// 	w.Write([]byte("200 - OK"))
-	// 	fmt.Println("OPTIONS REQUEST IN AUTH")
-	// 	return
-	// }
 
 	body, _ := ioutil.ReadAll(r.Body)
 	res := credentials{}
@@ -93,7 +88,10 @@ func authUser(w http.ResponseWriter, r *http.Request) {
 
 	credCredibility := checkCredentials(res)
 	if credCredibility == loginSuccessful {
-		issuetoken(w, r)
+		ret := token{token: issuetoken()}
+		js, _ := json.Marshal(ret)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(js)
 	} else {
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte("403 - Forbidden"))
@@ -102,31 +100,32 @@ func authUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func registerUser(w http.ResponseWriter, r *http.Request) {
-	// setupResponse(&w, r)
-	// if (*r).Method == "OPTIONS" {
-	// 	return
-	// }
 
 	body, _ := ioutil.ReadAll(r.Body)
 	res := credentials{}
 	json.Unmarshal([]byte(body), &res)
 
+	if setPassword(res) == registerSuccessful {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("200 - OK"))
+	} else {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte("401 - Unauthorized"))
+	}
+
 }
 
-func issuetoken(w http.ResponseWriter, r *http.Request) {
+func issuetoken() (token string) {
 	rnd := make([]byte, 8)
 	rand.Read(rnd)
-	ret := token{
-		token: fmt.Sprintf("%X", rnd),
-	}
+
 	currentSessions = append(currentSessions, session{token: fmt.Sprintf("%X", rnd), TimeLeft: 6})
-	js, _ := json.Marshal(ret)
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(js)
+	token = fmt.Sprintf("%X", rnd)
+	return
 }
 
 func checkToken(w http.ResponseWriter, r *http.Request) {
-	setupResponse(&w, r)
+	//setupResponse(&w, r)
 	if (*r).Method == "OPTIONS" {
 		return
 	}
@@ -134,14 +133,7 @@ func checkToken(w http.ResponseWriter, r *http.Request) {
 	res := token{}
 	json.Unmarshal([]byte(body), &res)
 
-	var occured bool
-	for _, element := range currentSessions {
-		if element.token == res.token {
-			element.TimeLeft = 6
-			occured = true
-			break
-		}
-	}
+	occured := verifyToken(res.token)
 
 	if !occured {
 		w.WriteHeader(http.StatusForbidden)
@@ -153,6 +145,14 @@ func checkToken(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
+func backgroundDuties() {
+	ticker := time.NewTicker(5 * time.Minute)
+	for t := range ticker.C {
+		checkSessions()
+		fmt.Println("Background Tasks", t)
+	}
+}
+
 func checkSessions() {
 	for index, element := range currentSessions {
 		element.TimeLeft--
@@ -162,11 +162,18 @@ func checkSessions() {
 	}
 }
 
+func verifyToken(token string) (occured bool) {
+	for _, element := range currentSessions {
+		if element.token == token {
+			element.TimeLeft = 6
+			occured = true
+			break
+		}
+	}
+	return
+}
+
 func logoutUser(w http.ResponseWriter, r *http.Request) {
-	// setupResponse(&w, r)
-	// if (*r).Method == "OPTIONS" {
-	// 	return
-	// }
 	body, _ := ioutil.ReadAll(r.Body)
 	res := token{}
 	json.Unmarshal([]byte(body), &res)
@@ -190,8 +197,6 @@ func logoutUser(w http.ResponseWriter, r *http.Request) {
 
 func changePassword(w http.ResponseWriter, r *http.Request) {
 	//User is required to give the current valid password as well as the username and the new password
-	w.WriteHeader(http.StatusNotImplemented)
-	w.Write([]byte("501 - Not Implemented"))
 	res := changePass{}
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
@@ -236,16 +241,30 @@ func setPassword(credentials credentials) (state int) {
 	rand.Read(salt)
 
 	nameCrypt := sha512.Sum512([]byte(credentials.Name))
-	passCrypt, _ := scrypt.Key([]byte(credentials.Password), salt, 32768, 8, 1, 32)
-	if _, err := os.Stat(fmt.Sprintf("%X", nameCrypt)); err == nil {
+	passCrypt, err := scrypt.Key([]byte(credentials.Password), salt, 32768, 8, 1, 32)
+	if err != nil {
+		state = encryptionError
+		return
+	}
+
+	if _, err = os.Stat(fmt.Sprintf("%X", nameCrypt)); err == nil {
 		state = fileError
 		return
 	}
-	f, _ := os.Create(fmt.Sprintf("%X", nameCrypt))
+	f, err := os.Create(fmt.Sprintf("%X", nameCrypt))
+	if err != nil {
+		state = fileError
+		return
+	}
 	storeElement := store{
 		Pass: append(passCrypt, salt...),
 	}
-	js, _ := json.Marshal(storeElement)
+	js, err := json.Marshal(storeElement)
+	if err != nil {
+		state = formatError
+		return
+	}
 	f.Write(js)
+	state = registerSuccessful
 	return
 }
