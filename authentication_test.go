@@ -51,6 +51,9 @@ func TestTSessionCheck(t *testing.T) {
 
 	currentSessions = append(currentSessions, session{token: "testets", TimeLeft: 1})
 	checkSessions()
+	if verifyToken("testets") == true {
+		t.FailNow()
+	}
 }
 
 func TestMain(t *testing.T) {
@@ -72,3 +75,9 @@ func TestBackgroundDuties(t *testing.T) {
 	timeInterval = 100 * time.Millisecond
 	backgroundDuties()
 }
+
+// func TestHttpAuth(t *testing.T) {
+// 	w := http.ResponseWriter{}
+// 	cred := credentials{Name: "fred", Password: "test"}
+// 	r := http.NewRequest("POST", "stuff", js)
+// }

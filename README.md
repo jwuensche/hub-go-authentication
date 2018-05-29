@@ -26,5 +26,4 @@ Per default the container will use port 9000 this can be changed in the
 Makefile.
 
 ## Current Issues
-- Firefox and Chrome CORS preflight are getting 403
 - Tests currently not including errors thrown by used packages like json or os

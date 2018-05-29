@@ -69,7 +69,7 @@ func main() {
 	//This will allow access to the server even if Request originated somewhere else
 	allowOrigins := handlers.AllowedOrigins([]string{"*"})
 	allowMethods := handlers.AllowedMethods([]string{"GET", "POST", "PUT", "OPTIONS", "HEAD"})
-	allowHeaders := handlers.AllowedHeaders([]string{"X-Requested-With"})
+	allowHeaders := handlers.AllowedHeaders([]string{"X-Requested-With", "Content-Type"})
 	r.HandleFunc("/auth", authUser)
 	r.HandleFunc("/register", registerUser)
 	r.HandleFunc("/checkToken", checkToken)
