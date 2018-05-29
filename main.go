@@ -7,14 +7,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
+	"github.com/op/go-logging"
 	"golang.org/x/crypto/scrypt"
+	yaml "gopkg.in/yaml.v2"
 )
 
 /******************* structures and enums */
@@ -59,12 +61,29 @@ type changePass struct {
 }
 
 /******************* global variables */
-var currentSessions []session
-var testingMode bool
-var timeInterval time.Duration
+var (
+	currentSessions []session
+	testingMode     bool
+	timeInterval    time.Duration
+)
+
+/******************* config variables */
+var (
+	port     string
+	location string
+)
+
+/******************* logger init */
+var log = logging.MustGetLogger("authentication")
+
+var format = logging.MustStringFormatter(
+	`%{color}%{time:15:04:05.000} %{shortfunc}|%{shortfile} : %{level:.4s} %{id:03x}%{color:reset} %{message}`,
+)
 
 /******************* HTTP handling */
 func main() {
+	loggerInitilization()
+	configure()
 	r := mux.NewRouter()
 	//This will allow access to the server even if Request originated somewhere else
 	allowOrigins := handlers.AllowedOrigins([]string{"*"})
@@ -76,14 +95,14 @@ func main() {
 	r.HandleFunc("/logout", logoutUser)
 	r.HandleFunc("/changePassword", changePassword)
 	http.Handle("/", r)
-	fmt.Println("Listening on port 9000")
+	log.Notice("Serving at port", port)
 	if testingMode {
 		return
 	}
 	//So this is a quite ugly way to exlude them from testing
 	timeInterval = 5 * time.Minute
 	go backgroundDuties()
-	log.Fatal(http.ListenAndServe(":9000", handlers.CORS(allowOrigins, allowMethods, allowHeaders)(r)))
+	log.Fatal(http.ListenAndServe(port, handlers.CORS(allowOrigins, allowMethods, allowHeaders)(r)))
 }
 
 func authUser(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +118,7 @@ func authUser(w http.ResponseWriter, r *http.Request) {
 		ret := token{Token: test}
 		js, err := json.Marshal(ret)
 		if err != nil {
-			fmt.Println("error: format error")
+			log.Error("Format error")
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(js)
@@ -111,7 +130,6 @@ func authUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func registerUser(w http.ResponseWriter, r *http.Request) {
-
 	body, _ := ioutil.ReadAll(r.Body)
 	res := credentials{}
 	json.Unmarshal([]byte(body), &res)
@@ -194,9 +212,9 @@ func logoutUser(w http.ResponseWriter, r *http.Request) {
 /****************************** utility functions */
 func backgroundDuties() {
 	ticker := time.NewTicker(timeInterval)
-	for t := range ticker.C {
+	for _ = range ticker.C {
 		checkSessions()
-		fmt.Println("Background Tasks", t)
+		log.Info("Background Task")
 		if testingMode {
 			ticker.Stop()
 			return
@@ -282,4 +300,54 @@ func issueToken() (token string) {
 	currentSessions = append(currentSessions, session{token: fmt.Sprintf("%X", rnd), TimeLeft: 6})
 	token = fmt.Sprintf("%X", rnd)
 	return
+}
+
+// Config represents the structural idea of the config yaml file used to give configure optios to the Authentication
+// service
+type Config struct {
+	Port int `yaml:"port"`
+}
+
+func configure() {
+	_, err := os.Stat("config/config.yml")
+	if err == nil {
+		log.Notice("Config File found. Applying ...")
+		configFile, err := ioutil.ReadFile("config/config.yml")
+		if err != nil {
+			log.Error("Opening Config failed")
+			return
+		}
+		config := Config{}
+		err = yaml.Unmarshal([]byte(configFile), &config)
+		if err != nil {
+			log.Error("Configuration file is invalid")
+		}
+		port = ":" + strconv.Itoa(config.Port)
+	} else {
+		log.Notice("No config found. Using default configuration")
+		os.MkdirAll("config", 0722)
+		configFile, err := os.Create("config/config.yml")
+		config := Config{Port: 9000}
+		fmt.Println(config)
+		if err != nil {
+			log.Error("Opening Config failed")
+			return
+		}
+		yml, err := yaml.Marshal(config)
+		if err != nil {
+			log.Error("Encoding default config failed")
+		}
+		configFile.Write(yml)
+		configFile.Close()
+		port = ":9000"
+	}
+
+}
+
+func loggerInitilization() {
+	backend1 := logging.NewLogBackend(os.Stderr, "", 0)
+	backend1Formatter := logging.NewBackendFormatter(backend1, format)
+	backend1Leveled := logging.AddModuleLevel(backend1)
+	backend1Leveled.SetLevel(logging.ERROR, "")
+	logging.SetBackend(backend1Leveled, backend1Formatter)
 }
