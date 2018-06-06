@@ -245,7 +245,7 @@ func verifyToken(token string) (occured bool) {
 func checkCredentials(credentials credentials) (state int) {
 	storage := store{}
 	nameCrypt := sha512.Sum512([]byte(credentials.Name))
-	f, err := ioutil.ReadFile(fmt.Sprintf("%X", nameCrypt))
+	f, err := ioutil.ReadFile("store/" + fmt.Sprintf("%X", nameCrypt))
 	if err != nil {
 		state = loginFailed
 		return
@@ -271,11 +271,12 @@ func setPassword(credentials credentials) (state int) {
 		return
 	}
 
-	if _, err = os.Stat(fmt.Sprintf("%X", nameCrypt)); err == nil {
+	if _, err = os.Stat("store/" + fmt.Sprintf("%X", nameCrypt)); err == nil {
 		state = fileError
 		return
 	}
-	f, err := os.Create(fmt.Sprintf("%X", nameCrypt))
+	os.MkdirAll("store", 0722)
+	f, err := os.Create("store/" + fmt.Sprintf("%X", nameCrypt))
 	if err != nil {
 		state = fileError
 		return
@@ -321,6 +322,7 @@ func configure() {
 		err = yaml.Unmarshal([]byte(configFile), &config)
 		if err != nil {
 			log.Error("Configuration file is invalid")
+			return
 		}
 		port = ":" + strconv.Itoa(config.Port)
 	} else {
@@ -336,12 +338,12 @@ func configure() {
 		yml, err := yaml.Marshal(config)
 		if err != nil {
 			log.Error("Encoding default config failed")
+			return
 		}
 		configFile.Write(yml)
 		configFile.Close()
 		port = ":9000"
 	}
-
 }
 
 func loggerInitilization() {

@@ -10,8 +10,8 @@ import (
 
 func TestSetPassword(t *testing.T) {
 	nameCrypt := sha512.Sum512([]byte("testuser"))
-	if _, err := os.Stat(fmt.Sprintf("%X", nameCrypt)); err == nil {
-		os.Remove(fmt.Sprintf("%X", nameCrypt))
+	if _, err := os.Stat("store/" + fmt.Sprintf("%X", nameCrypt)); err == nil {
+		os.Remove("store/" + fmt.Sprintf("%X", nameCrypt))
 	}
 	//Positive
 	if registerSuccessful != setPassword(credentials{Name: "testuser", Password: "tesTpAssword"}) {
@@ -74,6 +74,12 @@ func TestVerifyToken(t *testing.T) {
 func TestBackgroundDuties(t *testing.T) {
 	timeInterval = 100 * time.Millisecond
 	backgroundDuties()
+}
+
+func TestConfigInit(t *testing.T) {
+	os.Remove("config/config.yml")
+	configure()
+	configure()
 }
 
 // func TestHttpAuth(t *testing.T) {
