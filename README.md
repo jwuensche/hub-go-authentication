@@ -3,8 +3,9 @@ This repository contains a simple and lightweight authentication service build w
 
 ## How to start
 ```bash
-git clone git@bitbucket.org:jwuensche/hub-auth-service.git
-#or http if you have not added your ssh key to github
+git clone git@github.com:jwuensche/hub-go-authentication.git
+#or
+git clone https://github.com/jwuensche/hub-go-authentication.git
 
 go build -o hub-go-auth
 ./hub-go-auth
@@ -72,10 +73,21 @@ Request can be send by posting json to the specified routes which are:
 
 ## How to test
 Run
-```
+```bash
   go test
 ```
 in your terminal to execute existing tests.
 
 ## Current Issues
 - Tests currently not including errors thrown by used packages like json or os
+
+## Used Packages
+
+- gorilla/mux,
+https://github.com/gorilla/mux
+
+- op-logging,
+https://github.com/op/go-logging
+
+- go-yaml,
+https://github.com/go-yaml/yaml
