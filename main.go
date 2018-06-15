@@ -3,20 +3,22 @@ package main
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha512"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"os"
-	"strconv"
 	"time"
 
+	jwt "github.com/dgrijalva/jwt-go"
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
+	config "github.com/jwuensche/go-config-yaml"
 	"github.com/op/go-logging"
 	"golang.org/x/crypto/scrypt"
-	yaml "gopkg.in/yaml.v2"
 )
 
 /******************* structures and enums */
@@ -33,7 +35,7 @@ const (
 
 /* credentials allows to unwrap credentials send in http requests*/
 type credentials struct {
-	Name     string
+	User     string
 	Password string
 }
 
@@ -55,7 +57,7 @@ type session struct {
 }
 
 type changePass struct {
-	Name        string
+	User        string
 	Password    string
 	NewPassword string
 }
@@ -65,6 +67,7 @@ var (
 	currentSessions []session
 	testingMode     bool
 	timeInterval    time.Duration
+	privKey         *rsa.PrivateKey
 )
 
 /******************* config variables */
@@ -77,7 +80,7 @@ var (
 var log = logging.MustGetLogger("authentication")
 
 var format = logging.MustStringFormatter(
-	`%{color}%{time:15:04:05.000} %{shortfunc}|%{shortfile} : %{level:.4s} %{id:03x}%{color:reset} %{message}`,
+	`%{color}%{time:15:04:05.000} %{shortfunc} | %{shortfile} : %{level:.8s} %{id:03x}%{color:reset} %{message}`,
 )
 
 /******************* HTTP handling */
@@ -98,6 +101,8 @@ func main() {
 	log.Notice("Serving at port", port)
 	if testingMode {
 		return
+	} else {
+		generateRSA()
 	}
 	//So this is a quite ugly way to exlude them from testing
 	timeInterval = 5 * time.Minute
@@ -114,11 +119,11 @@ func authUser(w http.ResponseWriter, r *http.Request) {
 
 	credCredibility := checkCredentials(res)
 	if credCredibility == loginSuccessful {
-		test := issueToken()
-		ret := token{Token: test}
+		ret := token{Token: issueJWT()}
 		js, err := json.Marshal(ret)
 		if err != nil {
 			log.Error("Format error")
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(js)
@@ -145,16 +150,11 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func checkToken(w http.ResponseWriter, r *http.Request) {
-	if (*r).Method == "OPTIONS" {
-		return
-	}
 	body, _ := ioutil.ReadAll(r.Body)
 	res := token{}
 	json.Unmarshal([]byte(body), &res)
 
-	occured := verifyToken(res.Token)
-
-	if !occured {
+	if e := verfiyJWT(res.Token); e != nil {
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte("403 - Forbidden"))
 	} else {
@@ -173,12 +173,12 @@ func changePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	json.Unmarshal([]byte(body), &res)
 	cred := credentials{
-		Name:     res.Name,
+		User:     res.User,
 		Password: res.Password,
 	}
 	credCredibility := checkCredentials(cred)
 	if credCredibility == loginSuccessful {
-		setPassword(credentials{Name: res.Name, Password: res.NewPassword})
+		setPassword(credentials{User: res.User, Password: res.NewPassword})
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("200 - OK"))
 	} else {
@@ -244,7 +244,7 @@ func verifyToken(token string) (occured bool) {
 
 func checkCredentials(credentials credentials) (state int) {
 	storage := store{}
-	nameCrypt := sha512.Sum512([]byte(credentials.Name))
+	nameCrypt := sha512.Sum512([]byte(credentials.User))
 	f, err := ioutil.ReadFile("store/" + fmt.Sprintf("%X", nameCrypt))
 	if err != nil {
 		state = loginFailed
@@ -264,7 +264,7 @@ func setPassword(credentials credentials) (state int) {
 	salt := make([]byte, 8)
 	rand.Read(salt)
 
-	nameCrypt := sha512.Sum512([]byte(credentials.Name))
+	nameCrypt := sha512.Sum512([]byte(credentials.User))
 	passCrypt, err := scrypt.Key([]byte(credentials.Password), salt, 32768, 8, 1, 32)
 	if err != nil {
 		state = encryptionError
@@ -295,12 +295,78 @@ func setPassword(credentials credentials) (state int) {
 }
 
 func issueToken() (token string) {
-	rnd := make([]byte, 8)
+	rnd := make([]byte, 16)
 	rand.Read(rnd)
 
 	currentSessions = append(currentSessions, session{token: fmt.Sprintf("%X", rnd), TimeLeft: 6})
 	token = fmt.Sprintf("%X", rnd)
 	return
+}
+
+func issueJWT() (token string) {
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS512, jwt.MapClaims{
+		"token": issueToken(),
+		"nbf":   time.Now(),
+	})
+	if err := privKey.Validate(); err != nil {
+		log.Error("Generated key pair invalid")
+		os.Exit(1)
+		return
+	}
+	token, err := tok.SignedString(privKey)
+	if err != nil {
+		log.Error("Signing of Token failed", err)
+	}
+	return
+}
+
+func verfiyJWT(tokenstring string) (e error) {
+	token, err := validateJWT(tokenstring)
+	if err != nil {
+		log.Error("Verification of JWT failed")
+		e = errors.New("Invalid JWT")
+		return
+	}
+	if verifyToken(token) == true {
+		e = nil
+		return
+	}
+	e = errors.New("Token Invalid")
+	return
+}
+
+func validateJWT(tokenstring string) (token string, e error) {
+	jwtok, err := jwt.Parse(tokenstring, func(t *jwt.Token) (interface{}, error) {
+		if _, err := t.Method.(*jwt.SigningMethodRSA); !err {
+			return nil, fmt.Errorf("Invalid type %v", t.Header["alg"])
+		}
+		return privKey.Public(), nil
+	})
+	if err != nil {
+		log.Error("Parsing of JWT failed")
+	}
+	if claims, ok := jwtok.Claims.(jwt.MapClaims); ok && jwtok.Valid {
+		token = claims["token"].(string)
+		e = nil
+	} else {
+		token = ""
+		e = errors.New("Invalid JWT")
+	}
+	return
+}
+
+func generateRSA() {
+	log.Notice("Generating RSA key")
+	key, err := rsa.GenerateKey(rand.Reader, 4096)
+	if err != nil {
+		log.Error("Generation of RSA key failed")
+		os.Exit(1)
+	}
+	if err = key.Validate(); err != nil {
+		log.Error("Generated key pair invalid")
+		os.Exit(1)
+	}
+	privKey = key
 }
 
 // Config represents the structural idea of the config yaml file used to give configure optios to the Authentication
@@ -309,41 +375,25 @@ type Config struct {
 	Port int `yaml:"port"`
 }
 
-func configure() {
-	_, err := os.Stat("config/config.yml")
-	if err == nil {
+func configure() (e error) {
+	configFile, e := config.NewConfig("config/", "config", false, 0722)
+	if e != nil {
+		return
+	}
+	if v, err := configFile.Get("port"); err == nil {
 		log.Notice("Config File found. Applying ...")
-		configFile, err := ioutil.ReadFile("config/config.yml")
-		if err != nil {
-			log.Error("Opening Config failed")
-			return
-		}
-		config := Config{}
-		err = yaml.Unmarshal([]byte(configFile), &config)
-		if err != nil {
-			log.Error("Configuration file is invalid")
-			return
-		}
-		port = ":" + strconv.Itoa(config.Port)
+		port = ":" + v
 	} else {
 		log.Notice("No config found. Using default configuration")
-		os.MkdirAll("config", 0722)
-		configFile, err := os.Create("config/config.yml")
-		config := Config{Port: 9000}
-		fmt.Println(config)
+		log.Error(err)
+		configFile.Set("port", "9000")
+		v, err := configFile.Get("port")
 		if err != nil {
-			log.Error("Opening Config failed")
 			return
 		}
-		yml, err := yaml.Marshal(config)
-		if err != nil {
-			log.Error("Encoding default config failed")
-			return
-		}
-		configFile.Write(yml)
-		configFile.Close()
-		port = ":9000"
+		port = ":" + v
 	}
+	return
 }
 
 func loggerInitilization() {

@@ -52,7 +52,7 @@ Request can be send by posting json to the specified routes which are:
 - /register
 ```json
 {
-  "Name": "foo",
+  "User": "foo",
   "Password": "bar"
 }
 ```
@@ -74,12 +74,13 @@ Request can be send by posting json to the specified routes which are:
 ## How to test
 Run
 ```bash
-  go test
+  $ go test
 ```
 in your terminal to execute existing tests.
 
 ## Current Issues
 - Tests currently not including errors thrown by used packages like json or os
+- Transition to usage of JWT https://jwt.io/introduction/
 
 ## Used Packages
 
