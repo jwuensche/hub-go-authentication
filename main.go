@@ -5,8 +5,11 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha512"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -76,6 +79,9 @@ var (
 	location string
 )
 
+/******************* paths */
+var rsaPath = "rsa/"
+
 /******************* logger init */
 var log = logging.MustGetLogger("authentication")
 
@@ -87,7 +93,23 @@ var format = logging.MustStringFormatter(
 func main() {
 	loggerInitilization()
 	configure()
+
+	loadingRSA := flag.Bool("generate", false, "a bool")
+	flag.Parse()
+
+	if *loadingRSA {
+		generateRSA()
+	} else {
+		e := loadRSA()
+		if e != nil {
+			log.Error(e)
+			log.Info("To generate keypair use -generate")
+			return
+		}
+	}
+
 	r := mux.NewRouter()
+
 	//This will allow access to the server even if Request originated somewhere else
 	allowOrigins := handlers.AllowedOrigins([]string{"*"})
 	allowMethods := handlers.AllowedMethods([]string{"GET", "POST", "PUT", "OPTIONS", "HEAD"})
@@ -101,9 +123,8 @@ func main() {
 	log.Notice("Serving at port", port)
 	if testingMode {
 		return
-	} else {
-		generateRSA()
 	}
+
 	//So this is a quite ugly way to exlude them from testing
 	timeInterval = 5 * time.Minute
 	go backgroundDuties()
@@ -314,6 +335,8 @@ func issueJWT() (token string) {
 		return
 	}
 	token, err := tok.SignedString(privKey)
+	f, _ := os.Create("log")
+	f.WriteString(token)
 	if err != nil {
 		log.Error("Signing of Token failed", err)
 	}
@@ -357,7 +380,7 @@ func validateJWT(tokenstring string) (token string, e error) {
 
 func generateRSA() {
 	log.Notice("Generating RSA key")
-	key, err := rsa.GenerateKey(rand.Reader, 4096)
+	key, err := rsa.GenerateKey(rand.Reader, 8192)
 	if err != nil {
 		log.Error("Generation of RSA key failed")
 		os.Exit(1)
@@ -367,6 +390,91 @@ func generateRSA() {
 		os.Exit(1)
 	}
 	privKey = key
+	log.Notice("Generating RSA key complete")
+	storeRSA(privKey)
+}
+
+func loadRSA() (err error) {
+	log.Notice("Loading RSA key")
+	//Public Key
+	pubPem, err := ioutil.ReadFile(rsaPath + "id_rsa.pub")
+	if err != nil {
+		return
+	}
+
+	pubBlock, _ := pem.Decode(pubPem)
+	if pubBlock == nil || pubBlock.Type != "RSA PUBLIC KEY" {
+		err = errors.New("public key file invalid")
+		return
+	}
+
+	pub, err := x509.ParsePKCS1PublicKey(pubBlock.Bytes)
+	if err != nil {
+		return
+	}
+
+	//Private Key
+	privPem, err := ioutil.ReadFile(rsaPath + "id_rsa")
+	if err != nil {
+		return
+	}
+
+	privBlock, _ := pem.Decode(privPem)
+	if privBlock == nil || privBlock.Type != "RSA PRIVATE KEY" {
+		err = errors.New("private key file invalid")
+		return
+	}
+
+	priv, err := x509.ParsePKCS1PrivateKey(privBlock.Bytes)
+	if err != nil {
+		return
+	}
+
+	//Setting key
+	privKey = priv
+	privKey.PublicKey = *pub
+
+	if err = privKey.Validate(); err != nil {
+		log.Error("Read in Key invalid")
+		return
+	}
+	log.Notice("Reading in RSA key finished")
+
+	err = nil
+	return
+}
+
+func storeRSA(key *rsa.PrivateKey) (err error) {
+	privPem := pem.EncodeToMemory(
+		&pem.Block{
+			Type:  "RSA PRIVATE KEY",
+			Bytes: x509.MarshalPKCS1PrivateKey(key),
+		},
+	)
+
+	pubPem := pem.EncodeToMemory(
+		&pem.Block{
+			Type:  "RSA PUBLIC KEY",
+			Bytes: x509.MarshalPKCS1PublicKey(&key.PublicKey),
+		},
+	)
+
+	os.Mkdir(rsaPath, 0722)
+	priv, err := os.Create(rsaPath + "id_rsa")
+	defer priv.Close()
+	if err != nil {
+		return
+	}
+	priv.Write(privPem)
+
+	pub, err := os.Create(rsaPath + "id_rsa.pub")
+	defer pub.Close()
+	if err != nil {
+		return
+	}
+	pub.Write(pubPem)
+
+	return
 }
 
 // Config represents the structural idea of the config yaml file used to give configure optios to the Authentication
@@ -387,10 +495,10 @@ func configure() (e error) {
 		log.Notice("No config found. Using default configuration")
 		log.Error(err)
 		configFile.Set("port", "9000")
-		v, err := configFile.Get("port")
-		if err != nil {
-			return
-		}
+		v := "9000"
+		// if err != nil {
+		// 	return
+		// }
 		port = ":" + v
 	}
 	return
