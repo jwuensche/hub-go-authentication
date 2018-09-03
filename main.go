@@ -335,8 +335,6 @@ func issueJWT() (token string) {
 		return
 	}
 	token, err := tok.SignedString(privKey)
-	f, _ := os.Create("log")
-	f.WriteString(token)
 	if err != nil {
 		log.Error("Signing of Token failed", err)
 	}
